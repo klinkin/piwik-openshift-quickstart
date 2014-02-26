@@ -4,53 +4,91 @@
  *
  * @link http://piwik.org
  * @license http://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
- * @version $Id: MultiSites.php 2968 2010-08-20 15:26:33Z vipsoft $
  *
  * @category Piwik_Plugins
- * @package Piwik_MultiSites
+ * @package MultiSites
  */
+namespace Piwik\Plugins\MultiSites;
+use Piwik\Menu\MenuTop;
+use Piwik\Piwik;
+
 
 /**
  *
- * @package Piwik_MultiSites
+ * @package MultiSites
  */
-class Piwik_MultiSites extends Piwik_Plugin
+class MultiSites extends \Piwik\Plugin
 {
-	public function getInformation()
-	{
-		return array(
-			'description' => Piwik_Translate('MultiSites_PluginDescription'),
-			'author' => 'ClearCode.cc',
-			'author_homepage' => "http://clearcode.cc/",
-			'version' => Piwik_Version::VERSION,
-		);
-	}
+    public function getInformation()
+    {
+        $info = parent::getInformation();
+        $info['author'] = 'Piwik PRO';
+        $info['author_homepage'] = 'http://piwik.pro';
+        return $info;
+    }
 
-	public function getListHooksRegistered()
-	{
-		return array(
-			'AssetManager.getCssFiles' => 'getCssFiles',
-			'AssetManager.getJsFiles' => 'getJsFiles',
-			'TopMenu.add' => 'addTopMenu',
-		);
-	}
+    /**
+     * @see Piwik_Plugin::getListHooksRegistered
+     */
+    public function getListHooksRegistered()
+    {
+        return array(
+            'AssetManager.getStylesheetFiles' => 'getStylesheetFiles',
+            'AssetManager.getJavaScriptFiles' => 'getJsFiles',
+            'Menu.Top.addItems'               => 'addTopMenu',
+            'API.getReportMetadata'           => 'getReportMetadata',
+        );
+    }
 
-	public function addTopMenu()
-	{
-		Piwik_AddTopMenu('General_MultiSitesSummary', array('module' => 'MultiSites', 'action' => 'index'), true, 3);
-	}
+    public function getReportMetadata(&$reports)
+    {
+        $metadataMetrics = array();
+        foreach (API::getApiMetrics($enhanced = true) as $metricName => $metricSettings) {
+            $metadataMetrics[$metricName] =
+                Piwik::translate($metricSettings[API::METRIC_TRANSLATION_KEY]);
+            $metadataMetrics[$metricSettings[API::METRIC_EVOLUTION_COL_NAME_KEY]] =
+                Piwik::translate($metricSettings[API::METRIC_TRANSLATION_KEY]) . " " . Piwik::translate('MultiSites_Evolution');
+        }
 
-	function getJsFiles( $notification )
-	{
-		$jsFiles = &$notification->getNotificationObject();
-		
-		$jsFiles[] = "plugins/MultiSites/templates/common.js";
-	}
-	
-	function getCssFiles( $notification )
-	{
-		$cssFiles = &$notification->getNotificationObject();
-		
-		$cssFiles[] = "plugins/MultiSites/templates/styles.css";
-	}
+        $reports[] = array(
+            'category'          => Piwik::translate('General_MultiSitesSummary'),
+            'name'              => Piwik::translate('General_AllWebsitesDashboard'),
+            'module'            => 'MultiSites',
+            'action'            => 'getAll',
+            'dimension'         => Piwik::translate('General_Website'), // re-using translation
+            'metrics'           => $metadataMetrics,
+            'processedMetrics'  => false,
+            'constantRowsCount' => false,
+            'order'             => 5
+        );
+
+        $reports[] = array(
+            'category'          => Piwik::translate('General_MultiSitesSummary'),
+            'name'              => Piwik::translate('General_SingleWebsitesDashboard'),
+            'module'            => 'MultiSites',
+            'action'            => 'getOne',
+            'dimension'         => Piwik::translate('General_Website'), // re-using translation
+            'metrics'           => $metadataMetrics,
+            'processedMetrics'  => false,
+            'constantRowsCount' => false,
+            'order'             => 5
+        );
+    }
+
+    public function addTopMenu()
+    {
+        $urlParams = array('module' => 'MultiSites', 'action' => 'index', 'segment' => false);
+        $tooltip = Piwik::translate('MultiSites_TopLinkTooltip');
+        MenuTop::addEntry('General_MultiSitesSummary', $urlParams, true, 3, $isHTML = false, $tooltip);
+    }
+
+    public function getJsFiles(&$jsFiles)
+    {
+        $jsFiles[] = "plugins/MultiSites/javascripts/multiSites.js";
+    }
+
+    public function getStylesheetFiles(&$stylesheets)
+    {
+        $stylesheets[] = "plugins/MultiSites/stylesheets/multiSites.less";
+    }
 }

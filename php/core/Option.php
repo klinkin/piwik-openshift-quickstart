@@ -1,187 +1,214 @@
 <?php
 /**
  * Piwik - Open source web analytics
- * 
+ *
  * @link http://piwik.org
  * @license http://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
- * @version $Id: Option.php 4303 2011-04-04 00:50:42Z vipsoft $
- * 
+ *
  * @category Piwik
  * @package Piwik
  */
+namespace Piwik;
 
 /**
- * Piwik_Option provides a very simple mechanism to save/retrieve key-values pair
- * from the database (persistent key-value datastore).
+ * Convenient key-value storage for user specified options and temporary
+ * data that needs to be persisted beyond one request.
  * 
- * This is useful to save Piwik-wide preferences, configuration values.
+ * ### Examples
  * 
+ * **Setting and getting options**
+ * 
+ *     $optionValue = Option::get('MyPlugin.MyOptionName');
+ *     if ($optionValue === false) {
+ *         // if not set, set it
+ *         Option::set('MyPlugin.MyOptionName', 'my option value');
+ *     }
+ * 
+ * **Storing user specific options**
+ * 
+ *     $userName = // ...
+ *     Option::set('MyPlugin.MyOptionName.' . $userName, 'my option value');
+ * 
+ * **Clearing user specific options**
+ * 
+ *     Option::deleteLike('MyPlugin.MyOptionName.%');
+ *
  * @package Piwik
+ * @api
  */
-class Piwik_Option
+class Option
 {
-	private $all = array();
-	private $loaded = false;
+    /**
+     * Returns the option value for the requested option `$name`.
+     * 
+     * @param string $name The option name.
+     * @return string|false The value or `false`, if not found.
+     */
+    public static function get($name)
+    {
+        return self::getInstance()->getValue($name);
+    }
 
-	static private $instance = null;
+    /**
+     * Sets an option value by name.
+     *
+     * @param string $name The option name.
+     * @param string $value The value to set the option to.
+     * @param int $autoLoad If set to 1, this option value will be automatically loaded when Piwik is initialzed;
+     *                      should be set to 1 for options that will be used in every Piwik request.
+     */
+    public static function set($name, $value, $autoload = 0)
+    {
+        return self::getInstance()->setValue($name, $value, $autoload);
+    }
 
-	/**
-	 * Singleton
-	 *
-	 * @return Piwik_Option
-	 */
-	static public function getInstance()
-	{
-		if (self::$instance == null)
-		{
-			self::$instance = new self;
-		}
-		return self::$instance;
-	}
-	
-	private function __construct() {}
+    /**
+     * Deletes an option.
+     *
+     * @param string $name Option name to match exactly.
+     * @param string $value If supplied the option will be deleted only if its value matches this value.
+     */
+    public static function delete($name, $value = null)
+    {
+        return self::getInstance()->deleteValue($name, $value);
+    }
 
-	/**
-	 * Returns the option value for the requested option $name, fetching from database, if not in cache.
-	 *
-	 * @param string $name Key
- 	* @return string|false Value or false, if not found
-	 */
-	public function get($name)
-	{
-		$this->autoload();
-		if(isset($this->all[$name]))
-		{
-			return $this->all[$name];
-		}
-		$value = Piwik_FetchOne( 'SELECT option_value '. 
-							'FROM `' . Piwik_Common::prefixTable('option') . '`'.
-							'WHERE option_name = ?', $name);
-		if($value === false)
-		{
-			return false;
-		}
-		$this->all[$name] = $value;
-		return $value;
-	}
-	
-	/**
-	 * Sets the option value in the database and cache
-	 *
-	 * @param string $name
-	 * @param string $value
-	 * @param int $autoload if set to 1, this option value will be automatically loaded; should be set to 1 for options that will always be used in the Piwik request.
-	 */
-	public function set($name, $value, $autoload = 0)
-	{
-		$autoload = (int)$autoload;
-		Piwik_Query('INSERT INTO `'. Piwik_Common::prefixTable('option') . '` (option_name, option_value, autoload) '.
-					' VALUES (?, ?, ?) '.
-					' ON DUPLICATE KEY UPDATE option_value = ?', 
-					array($name, $value, $autoload, $value));
-		$this->all[$name] = $value;
-	}
+    /**
+     * Deletes all options that match the supplied pattern.
+     *
+     * @param string $namePattern Pattern of key to match. `'%'` characters should be used as wildcards, and literal
+     *                            `'_'` characters should be escaped.
+     * @param string $value If supplied, options will be deleted only if their value matches this value.
+     */
+    public static function deleteLike($namePattern, $value = null)
+    {
+        return self::getInstance()->deleteNameLike($namePattern, $value);
+    }
 
-	/**
-	 * Delete key-value pair from database and reload cache.
-	 *
-	 * @param string $name Key to match exactly
-	 * @param string $value Optional value
-	 */
-	public function delete($name, $value = null)
-	{
-		$sql = 'DELETE FROM `'. Piwik_Common::prefixTable('option') . '` WHERE option_name = ?';
-		$bind[] = $name;
+    /**
+     * Clears the option value cache and forces a reload from the Database.
+     * Used in unit tests to reset the state of the object between tests.
+     *
+     * @return void
+     * @ignore
+     */
+    public static function clearCache()
+    {
+        $option = self::getInstance();
+        $option->loaded = false;
+        $option->all = array();
+    }
 
-		if(isset($value))
-		{
-			$sql .= ' AND option_value = ?';
-			$bind[] = $value;
-		}
+    /**
+     * @var array
+     */
+    private $all = array();
 
-		Piwik_Query($sql, $bind);
+    /**
+     * @var bool
+     */
+    private $loaded = false;
 
-		$this->clearCache();
-	}
+    /**
+     * Singleton instance
+     * @var \Piwik\Option
+     */
+    static private $instance = null;
 
-	/**
-	 * Delete key-value pair(s) from database and reload cache.
-	 * The supplied pattern should use '%' as wildcards, and literal '_' should be escaped.
-	 *
-	 * @param string $name Pattern of key to match.
-	 * @param string $value Optional value
-	 */
-	public function deleteLike($name, $value = null)
-	{
-		$sql = 'DELETE FROM `'. Piwik_Common::prefixTable('option') . '` WHERE option_name LIKE ?';
-		$bind[] = $name;
+    /**
+     * Returns Singleton instance
+     *
+     * @return \Piwik\Option
+     */
+    static private function getInstance()
+    {
+        if (self::$instance == null) {
+            self::$instance = new self;
+        }
+        return self::$instance;
+    }
 
-		if(isset($value))
-		{
-			$sql .= ' AND option_value = ?';
-			$bind[] = $value;
-		}
+    /**
+     * Private Constructor
+     */
+    private function __construct()
+    {
+    }
 
-		Piwik_Query($sql, $bind);
+    protected function getValue($name)
+    {
+        $this->autoload();
+        if (isset($this->all[$name])) {
+            return $this->all[$name];
+        }
+        $value = Db::fetchOne('SELECT option_value ' .
+            'FROM `' . Common::prefixTable('option') . '`' .
+            'WHERE option_name = ?', $name);
+        if ($value === false) {
+            return false;
+        }
+        $this->all[$name] = $value;
+        return $value;
+    }
 
-		$this->clearCache();
-	}
+    protected function setValue($name, $value, $autoLoad = 0)
+    {
+        $autoLoad = (int)$autoLoad;
+        Db::query('INSERT INTO `' . Common::prefixTable('option') . '` (option_name, option_value, autoload) ' .
+            ' VALUES (?, ?, ?) ' .
+            ' ON DUPLICATE KEY UPDATE option_value = ?',
+            array($name, $value, $autoLoad, $value));
+        $this->all[$name] = $value;
+    }
 
-	/**
-	 * Initialize cache with autoload settings.
-	 *
-	 * @param bool $forceReload Forces a reload if true; default is false
-	 */
-	private function autoload()
-	{
-		if($this->loaded)
-		{
-			return;
-		}
+    protected function deleteValue($name, $value)
+    {
+        $sql = 'DELETE FROM `' . Common::prefixTable('option') . '` WHERE option_name = ?';
+        $bind[] = $name;
 
-		$all = Piwik_FetchAll('SELECT option_value, option_name
-								FROM `'. Piwik_Common::prefixTable('option') . '` 
+        if (isset($value)) {
+            $sql .= ' AND option_value = ?';
+            $bind[] = $value;
+        }
+
+        Db::query($sql, $bind);
+
+        $this->clearCache();
+    }
+
+    protected function deleteNameLike($name, $value = null)
+    {
+        $sql = 'DELETE FROM `' . Common::prefixTable('option') . '` WHERE option_name LIKE ?';
+        $bind[] = $name;
+
+        if (isset($value)) {
+            $sql .= ' AND option_value = ?';
+            $bind[] = $value;
+        }
+
+        Db::query($sql, $bind);
+
+        $this->clearCache();
+    }
+
+    /**
+     * Initialize cache with autoload settings.
+     *
+     * @return void
+     */
+    protected function autoload()
+    {
+        if ($this->loaded) {
+            return;
+        }
+
+        $all = Db::fetchAll('SELECT option_value, option_name
+								FROM `' . Common::prefixTable('option') . '`
 								WHERE autoload = 1');
-		foreach($all as $option)
-		{
-			$this->all[$option['option_name']] = $option['option_value'];
-		}
+        foreach ($all as $option) {
+            $this->all[$option['option_name']] = $option['option_value'];
+        }
 
-		$this->loaded = true;
-	}
-	
-	/**
-	 * Clears the cache 
-	 * Used in unit tests to reset the state of the object between tests
-	 * 
-	 * @return void
-	 */
-	public function clearCache()
-	{
-		$this->loaded = false;
-		$this->all = array();
-	}
-}
-
-/**
- * Returns the option value for the requested option $name
- *
- * @param string $name Key
- * @return string|false Value or false, if not found
- */
-function Piwik_GetOption($name)
-{
-	return Piwik_Option::getInstance()->get($name);
-}
-
-/**
- * Sets the option value in the database
- *
- * @param string $name
- * @param string $value
- * @param int $autoload if set to 1, this option value will be automatically loaded; should be set to 1 for options that will always be used in the Piwik request.
- */
-function Piwik_SetOption($name, $value, $autoload = 0)
-{
-	Piwik_Option::getInstance()->set($name, $value, $autoload);
+        $this->loaded = true;
+    }
 }
